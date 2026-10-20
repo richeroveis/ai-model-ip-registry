@@ -1,0 +1,13 @@
+# Local credentials and generated state. Never commit the .env file.
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+artifacts/
+tmp_*.json
+tmp_*.txt
+deployment/*.log

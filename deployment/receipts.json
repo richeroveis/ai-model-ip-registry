@@ -1,0 +1,252 @@
+{
+  "network": "studionet",
+  "transactions": [
+    {
+      "execution_result": "SUCCESS",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/0x8dbcc7bdb30289929812925b76481c480d53f0d1e998f0654801a6e17c2fca8c",
+      "hash": "0x8dbcc7bdb30289929812925b76481c480d53f0d1e998f0654801a6e17c2fca8c",
+      "label": "deploy",
+      "messages": [],
+      "result": "MAJORITY_AGREE",
+      "source": "studionet.json",
+      "status": "FINALIZED",
+      "triggered_transactions": [],
+      "value": 0,
+      "value_credited": false
+    },
+    {
+      "execution_result": "SUCCESS",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/0x2995eebaf54f7503eb62396375ffd8687b73d4fb71d81fd263ab754500040c2e",
+      "hash": "0x2995eebaf54f7503eb62396375ffd8687b73d4fb71d81fd263ab754500040c2e",
+      "label": "register_model",
+      "messages": [],
+      "result": "MAJORITY_AGREE",
+      "source": "studionet.json",
+      "status": "FINALIZED",
+      "triggered_transactions": [],
+      "value": 100000000000000000,
+      "value_credited": true
+    },
+    {
+      "block_number": 0,
+      "execution_result": "NATIVE_TRANSFER",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/67e1906d3b35b2f07ef74bc4668b81834be948168ac834f5e3d7c314e95aac5f",
+      "hash": "67e1906d3b35b2f07ef74bc4668b81834be948168ac834f5e3d7c314e95aac5f",
+      "label": "fund_challenger",
+      "result": "NATIVE_TRANSFER",
+      "source": "studionet.json",
+      "status": "EVM_SUCCESS",
+      "value": "0"
+    },
+    {
+      "execution_result": "SUCCESS",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/0x90e2523dc5dcbfedaeafd985df051cc4d01262610b5687a3f0be087a9a6b1ce4",
+      "hash": "0x90e2523dc5dcbfedaeafd985df051cc4d01262610b5687a3f0be087a9a6b1ce4",
+      "label": "open_dispute",
+      "messages": [],
+      "result": "MAJORITY_AGREE",
+      "source": "studionet.json",
+      "status": "FINALIZED",
+      "triggered_transactions": [],
+      "value": 100000000000000000,
+      "value_credited": true
+    },
+    {
+      "execution_result": "SUCCESS",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/0xf4b7c041b7193a6348208f79e1c8b84575439f310e9c146e1a04f6c1f61491a4",
+      "hash": "0xf4b7c041b7193a6348208f79e1c8b84575439f310e9c146e1a04f6c1f61491a4",
+      "label": "audit_model_similarity_live",
+      "messages": [
+        {
+          "data": "",
+          "messageType": "0",
+          "onAcceptance": false,
+          "recipient": "0x37Db4cA812010e95d15fB30E7451D3469cdE435D",
+          "value": 170000000000000000
+        }
+      ],
+      "result": "MAJORITY_AGREE",
+      "source": "studionet.json",
+      "status": "FINALIZED",
+      "triggered_transactions": [
+        "0x612ba76c6180995ce015f3ad210c76a7e61960854166015ee67f2bad0e94f4dd"
+      ],
+      "value": 0,
+      "value_credited": false
+    },
+    {
+      "execution_result": "ERROR",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/0x7bc9083b7d92f01b5625ca06e1f12e765150549b4658abb245d9458b5ab806a4",
+      "hash": "0x7bc9083b7d92f01b5625ca06e1f12e765150549b4658abb245d9458b5ab806a4",
+      "label": "audit_after_settlement",
+      "messages": [],
+      "result": "MAJORITY_AGREE",
+      "source": "studionet.json",
+      "status": "FINALIZED",
+      "triggered_transactions": [],
+      "value": 0,
+      "value_credited": false
+    },
+    {
+      "execution_result": "ERROR",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/0x09fcae89e8720b90f6043f7d71663ff4a8deaace42fdb776a41182bf676d319f",
+      "hash": "0x09fcae89e8720b90f6043f7d71663ff4a8deaace42fdb776a41182bf676d319f",
+      "label": "expire_settled_dispute",
+      "messages": [],
+      "result": "MAJORITY_AGREE",
+      "source": "studionet.json",
+      "status": "FINALIZED",
+      "triggered_transactions": [],
+      "value": 0,
+      "value_credited": false
+    },
+    {
+      "execution_result": "ERROR",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/0x93d7df296d38210f87a7121fb205131f733d6e6edc026de4a7788095e08eeaa3",
+      "hash": "0x93d7df296d38210f87a7121fb205131f733d6e6edc026de4a7788095e08eeaa3",
+      "label": "propose_after_settlement",
+      "messages": [],
+      "result": "MAJORITY_AGREE",
+      "source": "studionet.json",
+      "status": "FINALIZED",
+      "triggered_transactions": [],
+      "value": 0,
+      "value_credited": false
+    },
+    {
+      "block_number": 0,
+      "execution_result": "NATIVE_TRANSFER",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/36bdad083b40921e6784388bc4e0d993e6003ee7a1c966d33192378456de1fe8",
+      "hash": "36bdad083b40921e6784388bc4e0d993e6003ee7a1c966d33192378456de1fe8",
+      "label": "fund_boundary_challenger",
+      "result": "NATIVE_TRANSFER",
+      "source": "time_boundaries.json",
+      "status": "EVM_SUCCESS",
+      "value": "0"
+    },
+    {
+      "execution_result": "SUCCESS",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/0x44a795ddd75c44863b15edeac6de8d89026aabc826ea3243b6d4fb524b079426",
+      "hash": "0x44a795ddd75c44863b15edeac6de8d89026aabc826ea3243b6d4fb524b079426",
+      "label": "register_exit_model",
+      "messages": [],
+      "result": "MAJORITY_AGREE",
+      "source": "time_boundaries.json",
+      "status": "FINALIZED",
+      "triggered_transactions": [],
+      "value": 100000000000000000,
+      "value_credited": true
+    },
+    {
+      "execution_result": "SUCCESS",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/0xd9739012e739c913e446e26c614da681434ae7e739b3baffbc23f65283eabbab",
+      "hash": "0xd9739012e739c913e446e26c614da681434ae7e739b3baffbc23f65283eabbab",
+      "label": "request_deregistration",
+      "messages": [],
+      "result": "MAJORITY_AGREE",
+      "source": "time_boundaries.json",
+      "status": "FINALIZED",
+      "triggered_transactions": [],
+      "value": 0,
+      "value_credited": false
+    },
+    {
+      "execution_result": "ERROR",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/0x7877a63a441053d9d521e473806b4ef291eeb70ee21280d14dc014f18420fa21",
+      "hash": "0x7877a63a441053d9d521e473806b4ef291eeb70ee21280d14dc014f18420fa21",
+      "label": "finalize_deregistration_early",
+      "messages": [],
+      "result": "MAJORITY_AGREE",
+      "source": "time_boundaries.json",
+      "status": "FINALIZED",
+      "triggered_transactions": [],
+      "value": 0,
+      "value_credited": false
+    },
+    {
+      "execution_result": "SUCCESS",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/0x174a1e4be93fef6af5fca0cea154528d170ffddc942f345afb0dceb2907c4576",
+      "hash": "0x174a1e4be93fef6af5fca0cea154528d170ffddc942f345afb0dceb2907c4576",
+      "label": "register_expiry_model",
+      "messages": [],
+      "result": "MAJORITY_AGREE",
+      "source": "time_boundaries.json",
+      "status": "FINALIZED",
+      "triggered_transactions": [],
+      "value": 100000000000000000,
+      "value_credited": true
+    },
+    {
+      "execution_result": "SUCCESS",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/0x56d24c4fc8e3efba9ce7699cd72a11ed97d4fd7c236bcd3c04e76584325e38e0",
+      "hash": "0x56d24c4fc8e3efba9ce7699cd72a11ed97d4fd7c236bcd3c04e76584325e38e0",
+      "label": "open_dispute",
+      "messages": [],
+      "result": "MAJORITY_AGREE",
+      "source": "time_boundaries.json",
+      "status": "FINALIZED",
+      "triggered_transactions": [],
+      "value": 100000000000000000,
+      "value_credited": true
+    },
+    {
+      "execution_result": "ERROR",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/0xdf073247586b45d29337234183710323078e261e7c6f12830b5412770ceae145",
+      "hash": "0xdf073247586b45d29337234183710323078e261e7c6f12830b5412770ceae145",
+      "label": "expire_dispute_early",
+      "messages": [],
+      "result": "MAJORITY_AGREE",
+      "source": "time_boundaries.json",
+      "status": "FINALIZED",
+      "triggered_transactions": [],
+      "value": 0,
+      "value_credited": false
+    },
+    {
+      "execution_result": "SUCCESS",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/0x39074a0137b1b22c2c4f00b70d992aaa4639abd95a9ff1a3378706e65017b090",
+      "hash": "0x39074a0137b1b22c2c4f00b70d992aaa4639abd95a9ff1a3378706e65017b090",
+      "label": "finalize_deregistration_late",
+      "messages": [
+        {
+          "data": "",
+          "messageType": "0",
+          "onAcceptance": false,
+          "recipient": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
+          "value": 100000000000000000
+        }
+      ],
+      "result": "MAJORITY_AGREE",
+      "source": "time_boundaries.json",
+      "status": "FINALIZED",
+      "triggered_transactions": [
+        "0x253f56d5f2d4675aa49d8f66584716e8c7a2be0361aa0c903df6412510135b1f"
+      ],
+      "value": 0,
+      "value_credited": false
+    },
+    {
+      "execution_result": "SUCCESS",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/0xc0748aa05b7ad94ece17339534df1d5539e714007244274c826b3aa682f160f0",
+      "hash": "0xc0748aa05b7ad94ece17339534df1d5539e714007244274c826b3aa682f160f0",
+      "label": "expire_dispute_late",
+      "messages": [
+        {
+          "data": "",
+          "messageType": "0",
+          "onAcceptance": false,
+          "recipient": "0x6bBE668F65EcA0b535E53406C50483b19C962683",
+          "value": 100000000000000000
+        }
+      ],
+      "result": "MAJORITY_AGREE",
+      "source": "time_boundaries.json",
+      "status": "FINALIZED",
+      "triggered_transactions": [
+        "0x9af224e6655cd89f3815cfb753812bf0a3da72fd6c2de788da8352fcd52739da"
+      ],
+      "value": 0,
+      "value_credited": false
+    }
+  ]
+}

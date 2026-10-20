@@ -1,0 +1,267 @@
+{
+  "chain_id": 61999,
+  "challenger": {
+    "address": "0x37Db4cA812010e95d15fB30E7451D3469cdE435D",
+    "audit_gas_cost_wei": 0,
+    "balance_after_audit_wei": 270000000000000000,
+    "balance_before_audit_wei": 100000000000000000,
+    "balance_wei": 200000000000000000,
+    "net_payout_wei": 170000000000000000
+  },
+  "config_after_deploy": {
+    "audit_window_secs": 3600,
+    "dispute_count": 0,
+    "exit_delay_secs": 3600,
+    "min_dispute_stake": 100000000000000000,
+    "min_registration_stake": 100000000000000000,
+    "model_count": 0,
+    "owner": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
+    "paused": false,
+    "pending_owner": "0x0000000000000000000000000000000000000000",
+    "split_table": {
+      "EXACT_PLAGIARISM": [
+        8500,
+        1500
+      ],
+      "NO_INFRINGEMENT": [
+        0,
+        10000
+      ],
+      "PARTIAL_DERIVATIVE": [
+        6500,
+        3500
+      ]
+    },
+    "total_locked": 0,
+    "total_paid_out": 0
+  },
+  "constructor_args": {
+    "audit_window_secs": 3600,
+    "exit_delay_secs": 3600,
+    "min_dispute_stake": 100000000000000000,
+    "min_registration_stake": 100000000000000000
+  },
+  "contract_address": "0xa8a2B23e69D2093fE6f496e59367974572775833",
+  "contract_balance_wei": 30000000000000000,
+  "contract_file": "contracts\\AIModelIPRegistry.py",
+  "contract_sha256": "a42d2a96aafaf7967ee5e4070fc13ec2cc2bf5dd3abfa40baf1e77be091c35f1",
+  "deployer": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
+  "dispute_after_open": {
+    "adjustment": "",
+    "audit_deadline": 1792450671,
+    "audit_digest": "",
+    "challenger": "0x37Db4cA812010e95d15fB30E7451D3469cdE435D",
+    "challenger_amount": 0,
+    "challenger_benchmark_url": "https://www.iana.org/help/example-domains",
+    "challenger_metadata_url": "https://example.com",
+    "challenger_stake": 100000000000000000,
+    "claim_card_sha256": "c81e196390d1de7410dd3018c1e9369126fb0a207bf077b4c1a675040f771cb8",
+    "claim_config_sha256": "e4135547fbaa18b0a3502e68bb79ab8b03d599f9ff43becd66af1fac6313e0a2",
+    "claim_dataset_sha256": "0b8727d9f38e4d97b65e1ee5029e7fe6ba87a7f8b6903a6d6b0543ea48693fd7",
+    "claim_weights_sha256": "1475fd49c82f3dbdee52c15c6494e6c27f9bfa1eb82bcc99d34612eab2cad919",
+    "creator": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
+    "creator_amount": 0,
+    "creator_stake_at_open": 100000000000000000,
+    "dispute_id": "dsp-1",
+    "evidence_note": "verbatim redistribution of the published weights",
+    "finalized_at": 0,
+    "match_count": 4,
+    "match_mask": 15,
+    "model_id": "llm-alpha-7b",
+    "opened_at": 1792447071,
+    "pot_at_settlement": 0,
+    "proposal_challenger_bps": 0,
+    "proposal_creator_bps": 0,
+    "proposal_digest": "",
+    "proposal_note": "",
+    "proposal_version": 0,
+    "proposer": "0x0000000000000000000000000000000000000000",
+    "rationale": "",
+    "status": "OPEN",
+    "tier": ""
+  },
+  "dispute_final": {
+    "adjustment": "",
+    "audit_deadline": 1792450671,
+    "audit_digest": "fd5ab08b31bd8d5b8a270bff7f126c8e60b810588b57b35407b85424f60321ca",
+    "challenger": "0x37Db4cA812010e95d15fB30E7451D3469cdE435D",
+    "challenger_amount": 170000000000000000,
+    "challenger_benchmark_url": "https://www.iana.org/help/example-domains",
+    "challenger_metadata_url": "https://example.com",
+    "challenger_stake": 100000000000000000,
+    "claim_card_sha256": "c81e196390d1de7410dd3018c1e9369126fb0a207bf077b4c1a675040f771cb8",
+    "claim_config_sha256": "e4135547fbaa18b0a3502e68bb79ab8b03d599f9ff43becd66af1fac6313e0a2",
+    "claim_dataset_sha256": "0b8727d9f38e4d97b65e1ee5029e7fe6ba87a7f8b6903a6d6b0543ea48693fd7",
+    "claim_weights_sha256": "1475fd49c82f3dbdee52c15c6494e6c27f9bfa1eb82bcc99d34612eab2cad919",
+    "creator": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
+    "creator_amount": 30000000000000000,
+    "creator_stake_at_open": 100000000000000000,
+    "dispute_id": "dsp-1",
+    "evidence_note": "verbatim redistribution of the published weights",
+    "finalized_at": 1792447087,
+    "match_count": 4,
+    "match_mask": 15,
+    "model_id": "llm-alpha-7b",
+    "opened_at": 1792447071,
+    "pot_at_settlement": 200000000000000000,
+    "proposal_challenger_bps": 0,
+    "proposal_creator_bps": 0,
+    "proposal_digest": "",
+    "proposal_note": "",
+    "proposal_version": 0,
+    "proposer": "0x0000000000000000000000000000000000000000",
+    "rationale": "All four SHA-256 digests (card, config, dataset, weights) match exactly, and the challenger admits verbatim redistribution of the published weights.",
+    "status": "SETTLED_CONSENSUS",
+    "tier": "EXACT_PLAGIARISM"
+  },
+  "dispute_id": "dsp-1",
+  "explorer_address": "https://genlayer-explorer.vercel.app/address/0xa8a2B23e69D2093fE6f496e59367974572775833",
+  "identity": {
+    "card_sha256": "c81e196390d1de7410dd3018c1e9369126fb0a207bf077b4c1a675040f771cb8",
+    "config_sha256": "e4135547fbaa18b0a3502e68bb79ab8b03d599f9ff43becd66af1fac6313e0a2",
+    "dataset_sha256": "0b8727d9f38e4d97b65e1ee5029e7fe6ba87a7f8b6903a6d6b0543ea48693fd7",
+    "expected_identity_digest": "213a65f1c3869af12442638f3898d87656006b351b20bdbda072ade5381ab9a3",
+    "weights_sha256": "1475fd49c82f3dbdee52c15c6494e6c27f9bfa1eb82bcc99d34612eab2cad919"
+  },
+  "identity_onchain": {
+    "card_sha256": "c81e196390d1de7410dd3018c1e9369126fb0a207bf077b4c1a675040f771cb8",
+    "config_sha256": "e4135547fbaa18b0a3502e68bb79ab8b03d599f9ff43becd66af1fac6313e0a2",
+    "dataset_sha256": "0b8727d9f38e4d97b65e1ee5029e7fe6ba87a7f8b6903a6d6b0543ea48693fd7",
+    "derived_identity_digest": "213a65f1c3869af12442638f3898d87656006b351b20bdbda072ade5381ab9a3",
+    "identity_valid": true,
+    "model_id": "llm-alpha-7b",
+    "stored_identity_digest": "213a65f1c3869af12442638f3898d87656006b351b20bdbda072ade5381ab9a3",
+    "weights_sha256": "1475fd49c82f3dbdee52c15c6494e6c27f9bfa1eb82bcc99d34612eab2cad919"
+  },
+  "identity_verification": {
+    "digest_identity": true,
+    "full_identity": true,
+    "match_count": 4,
+    "match_mask": 15,
+    "model_id": "llm-alpha-7b",
+    "partial_identity": true,
+    "registered_digest": "213a65f1c3869af12442638f3898d87656006b351b20bdbda072ade5381ab9a3",
+    "slot_matches": {
+      "card_sha256": true,
+      "config_sha256": true,
+      "dataset_sha256": true,
+      "weights_sha256": true
+    },
+    "supplied_digest": "213a65f1c3869af12442638f3898d87656006b351b20bdbda072ade5381ab9a3"
+  },
+  "invariants": {
+    "complete": true,
+    "contract_balance": 30000000000000000,
+    "error_count": 0,
+    "errors": [],
+    "expected_locked": 30000000000000000,
+    "model_deposits": 30000000000000000,
+    "ok": true,
+    "open_dispute_stakes": 0,
+    "open_disputes": 0,
+    "scanned_disputes": 1,
+    "scanned_models": 1,
+    "settled_disputes": 1,
+    "solvency_gap": 0,
+    "total_locked": 30000000000000000,
+    "total_paid_out": 170000000000000000
+  },
+  "model_final": {
+    "benchmark_url": "https://www.iana.org/help/example-domains",
+    "card_sha256": "c81e196390d1de7410dd3018c1e9369126fb0a207bf077b4c1a675040f771cb8",
+    "config_sha256": "e4135547fbaa18b0a3502e68bb79ab8b03d599f9ff43becd66af1fac6313e0a2",
+    "creator": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
+    "dataset_sha256": "0b8727d9f38e4d97b65e1ee5029e7fe6ba87a7f8b6903a6d6b0543ea48693fd7",
+    "deposit": 30000000000000000,
+    "disputes_lost": 1,
+    "disputes_total": 1,
+    "exit_unlock_at": 0,
+    "identity_digest": "213a65f1c3869af12442638f3898d87656006b351b20bdbda072ade5381ab9a3",
+    "last_dispute_id": "dsp-1",
+    "license_terms": "apache-2.0",
+    "metadata_url": "https://example.com",
+    "model_id": "llm-alpha-7b",
+    "open_dispute_id": "",
+    "registered_at": 1792447050,
+    "status": "FLAGGED",
+    "total_staked": 100000000000000000,
+    "updated_at": 1792447087,
+    "weights_sha256": "1475fd49c82f3dbdee52c15c6494e6c27f9bfa1eb82bcc99d34612eab2cad919"
+  },
+  "network": "studionet",
+  "transactions": [
+    {
+      "at": "2026-10-19T21:57:26Z",
+      "execution_result": "SUCCESS",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/0x8dbcc7bdb30289929812925b76481c480d53f0d1e998f0654801a6e17c2fca8c",
+      "hash": "0x8dbcc7bdb30289929812925b76481c480d53f0d1e998f0654801a6e17c2fca8c",
+      "label": "deploy",
+      "status": "7"
+    },
+    {
+      "at": "2026-10-19T21:57:38Z",
+      "execution_result": "SUCCESS",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/0x2995eebaf54f7503eb62396375ffd8687b73d4fb71d81fd263ab754500040c2e",
+      "hash": "0x2995eebaf54f7503eb62396375ffd8687b73d4fb71d81fd263ab754500040c2e",
+      "label": "register_model",
+      "status": "5"
+    },
+    {
+      "at": "2026-10-19T21:57:46Z",
+      "execution_result": "NATIVE_TRANSFER",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/67e1906d3b35b2f07ef74bc4668b81834be948168ac834f5e3d7c314e95aac5f",
+      "hash": "67e1906d3b35b2f07ef74bc4668b81834be948168ac834f5e3d7c314e95aac5f",
+      "label": "fund_challenger",
+      "status": "FINALIZED"
+    },
+    {
+      "at": "2026-10-19T21:57:59Z",
+      "execution_result": "SUCCESS",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/0x90e2523dc5dcbfedaeafd985df051cc4d01262610b5687a3f0be087a9a6b1ce4",
+      "hash": "0x90e2523dc5dcbfedaeafd985df051cc4d01262610b5687a3f0be087a9a6b1ce4",
+      "label": "open_dispute",
+      "status": "5"
+    },
+    {
+      "at": "2026-10-19T21:59:13Z",
+      "execution_result": "SUCCESS",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/0xf4b7c041b7193a6348208f79e1c8b84575439f310e9c146e1a04f6c1f61491a4",
+      "hash": "0xf4b7c041b7193a6348208f79e1c8b84575439f310e9c146e1a04f6c1f61491a4",
+      "label": "audit_model_similarity_live",
+      "status": "7"
+    },
+    {
+      "at": "2026-10-19T21:59:30Z",
+      "execution_result": "ERROR",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/0x7bc9083b7d92f01b5625ca06e1f12e765150549b4658abb245d9458b5ab806a4",
+      "hash": "0x7bc9083b7d92f01b5625ca06e1f12e765150549b4658abb245d9458b5ab806a4",
+      "label": "audit_after_settlement",
+      "status": "5"
+    },
+    {
+      "at": "2026-10-19T21:59:40Z",
+      "execution_result": "ERROR",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/0x09fcae89e8720b90f6043f7d71663ff4a8deaace42fdb776a41182bf676d319f",
+      "hash": "0x09fcae89e8720b90f6043f7d71663ff4a8deaace42fdb776a41182bf676d319f",
+      "label": "expire_settled_dispute",
+      "status": "5"
+    },
+    {
+      "at": "2026-10-19T21:59:50Z",
+      "execution_result": "ERROR",
+      "explorer": "https://genlayer-explorer.vercel.app/transactions/0x93d7df296d38210f87a7121fb205131f733d6e6edc026de4a7788095e08eeaa3",
+      "hash": "0x93d7df296d38210f87a7121fb205131f733d6e6edc026de4a7788095e08eeaa3",
+      "label": "propose_after_settlement",
+      "status": "5"
+    }
+  ],
+  "verified": {
+    "contract_sha256": "a42d2a96aafaf7967ee5e4070fc13ec2cc2bf5dd3abfa40baf1e77be091c35f1",
+    "four_way_identity": true,
+    "invariant_ok": true,
+    "pot_conserved": true,
+    "split_matches_policy": true,
+    "tier": "EXACT_PLAGIARISM",
+    "transactions_recorded": 8
+  }
+}

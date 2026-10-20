@@ -1,0 +1,8 @@
+# Normalize all text files to LF in the repository and on checkout.
+* text=auto eol=lf
+
+# The deployed contract artifact is bound by its exact byte hash
+# (sha256 a42d2a96aafaf7967ee5e4070fc13ec2cc2bf5dd3abfa40baf1e77be091c35f1).
+# It is stored verbatim, including its CRLF line endings, so EOL normalization
+# cannot change the blob that matches the studionet deployment.
+contracts/AIModelIPRegistry.py -text
