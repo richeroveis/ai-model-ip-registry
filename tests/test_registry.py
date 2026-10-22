@@ -100,17 +100,32 @@ def test_register_normalizes_uppercase_and_prefix(direct_vm, direct_deploy, dire
 
 def test_register_rejects_stake_below_minimum(direct_vm, direct_deploy, direct_alice):
     h = Harness(direct_vm, direct_deploy)
-    with reverted(direct_vm, "stake below minimum registration stake"):
-        h.register(direct_alice, stake=999)
+    result = h.register(direct_alice, stake=999)
+    assert result["accepted"] is False
+    assert result["reason"] == "INSUFFICIENT_REGISTRATION_BOND"
+    assert result["refund_credited"] == 999
+    assert result["refundable_balance"] == 999
     assert h.registry.get_config()["model_count"] == 0
+    # The value is in the contract and fully attributed to the sender.
+    assert h.balance() == 999
+    assert h.registry.get_refundable_balance(addr_hex(direct_alice))["refundable_balance"] == 999
+    invariants = h.registry.check_invariants(50)
+    assert invariants["ok"] is True, invariants["errors"]
 
 
 def test_register_rejects_duplicate_model_id(direct_vm, direct_deploy, direct_alice):
     h = Harness(direct_vm, direct_deploy)
     h.register(direct_alice)
-    with reverted(direct_vm, "model id already registered"):
-        h.register(direct_alice)
+    result = h.register(direct_alice)
+    assert result["accepted"] is False
+    assert result["reason"] == "DUPLICATE_MODEL_ID"
+    assert result["refund_credited"] == 1000
+    assert h.registry.get_refundable_balance(addr_hex(direct_alice))["refundable_balance"] == 1000
     assert h.registry.get_config()["model_count"] == 1
+    assert h.registry.get_config()["total_locked"] == 1000
+    assert h.balance() == 2000
+    invariants = h.registry.check_invariants(50)
+    assert invariants["ok"] is True, invariants["errors"]
 
 
 def test_register_rejects_duplicate_identity(direct_vm, direct_deploy, direct_alice, direct_bob):
@@ -118,10 +133,14 @@ def test_register_rejects_duplicate_identity(direct_vm, direct_deploy, direct_al
     h.register(direct_alice)
 
     # The same four artifacts cannot be claimed under a second model id.
-    with reverted(direct_vm, "identity is already registered"):
-        h.register(direct_bob, model_id="model-2")
+    result = h.register(direct_bob, model_id="model-2")
+    assert result["accepted"] is False
+    assert result["reason"] == "DUPLICATE_IDENTITY"
+    assert result["refund_credited"] == 1000
     assert h.registry.get_config()["model_count"] == 1
     assert h.registry.get_config()["total_locked"] == 1000
+    assert h.registry.get_refundable_balance(addr_hex(direct_bob))["refundable_balance"] == 1000
+    assert h.registry.check_invariants(50)["ok"] is True
 
 
 def test_identity_stays_unique_after_deregistration(direct_vm, direct_deploy, direct_alice, direct_bob):
@@ -132,24 +151,32 @@ def test_identity_stays_unique_after_deregistration(direct_vm, direct_deploy, di
     direct_vm.warp("2026-01-01T01:00:01Z")
     h.call(h.registry.finalize_deregistration, "model-1")
 
-    with reverted(direct_vm, "identity is already registered"):
-        h.register(direct_bob, model_id="model-2")
+    result = h.register(direct_bob, model_id="model-2")
+    assert result["accepted"] is False
+    assert result["reason"] == "DUPLICATE_IDENTITY"
+    assert result["refund_credited"] == 1000
     assert h.registry.get_config()["model_count"] == 1
+    assert h.registry.check_invariants(50)["ok"] is True
 
 
 @pytest.mark.parametrize(
-    "digests",
+    "digests, reason",
     [
-        ("a" * 63, "b" * 64, "c" * 64, "d" * 64),
-        ("a" * 65, "b" * 64, "c" * 64, "d" * 64),
-        ("z" * 64, "b" * 64, "c" * 64, "d" * 64),
-        ("", "b" * 64, "c" * 64, "d" * 64),
+        (("a" * 63, "b" * 64, "c" * 64, "d" * 64), "INVALID_WEIGHTS_DIGEST"),
+        (("a" * 65, "b" * 64, "c" * 64, "d" * 64), "INVALID_WEIGHTS_DIGEST"),
+        (("z" * 64, "b" * 64, "c" * 64, "d" * 64), "INVALID_WEIGHTS_DIGEST"),
+        (("", "b" * 64, "c" * 64, "d" * 64), "INVALID_WEIGHTS_DIGEST"),
+        (("a" * 64, "b" * 64, "c" * 64, "!"), "INVALID_CARD_DIGEST"),
     ],
 )
-def test_register_rejects_malformed_digest(direct_vm, direct_deploy, direct_alice, digests):
+def test_register_rejects_malformed_digest(direct_vm, direct_deploy, direct_alice, digests, reason):
     h = Harness(direct_vm, direct_deploy)
-    with reverted(direct_vm, "[EXPECTED]"):
-        h.register(direct_alice, digests=digests)
+    result = h.register(direct_alice, digests=digests)
+    assert result["accepted"] is False
+    assert result["reason"] == reason
+    assert result["refund_credited"] == 1000
+    assert h.registry.get_config()["model_count"] == 0
+    assert h.registry.check_invariants(50)["ok"] is True
 
 
 @pytest.mark.parametrize(
@@ -166,21 +193,30 @@ def test_register_rejects_malformed_digest(direct_vm, direct_deploy, direct_alic
 )
 def test_register_rejects_unsafe_url(direct_vm, direct_deploy, direct_alice, url):
     h = Harness(direct_vm, direct_deploy)
-    with reverted(direct_vm, "metadata url"):
-        h.register(direct_alice, metadata=url)
+    result = h.register(direct_alice, metadata=url)
+    assert result["accepted"] is False
+    assert result["reason"] == "INVALID_METADATA_URL"
+    assert result["refund_credited"] == 1000
+    assert h.registry.get_config()["model_count"] == 0
 
 
 @pytest.mark.parametrize("model_id", ["a", "ab", "bad id", "bad/id", "bad$id", ""])
 def test_register_rejects_bad_model_id(direct_vm, direct_deploy, direct_alice, model_id):
     h = Harness(direct_vm, direct_deploy)
-    with reverted(direct_vm, "model id"):
-        h.register(direct_alice, model_id=model_id)
+    result = h.register(direct_alice, model_id=model_id)
+    assert result["accepted"] is False
+    assert result["reason"] == "INVALID_MODEL_ID"
+    assert result["refund_credited"] == 1000
 
 
 def test_register_rejects_zero_value(direct_vm, direct_deploy, direct_alice):
     h = Harness(direct_vm, direct_deploy)
-    with reverted(direct_vm, "stake below minimum registration stake"):
-        h.register(direct_alice, stake=0)
+    result = h.register(direct_alice, stake=0)
+    assert result["accepted"] is False
+    assert result["reason"] == "INSUFFICIENT_REGISTRATION_BOND"
+    assert result["refund_credited"] == 0
+    assert h.balance() == 0
+    assert h.registry.get_config()["model_count"] == 0
 
 
 def test_top_up_increases_deposit_and_locked(direct_vm, direct_deploy, direct_alice):
@@ -201,16 +237,22 @@ def test_top_up_rejects_non_creator(direct_vm, direct_deploy, direct_alice, dire
     h = Harness(direct_vm, direct_deploy)
     h.register(direct_alice)
     h.as_(direct_bob)
-    with reverted(direct_vm, "caller is not the model creator"):
-        h.call(h.registry.top_up_stake, "model-1", value=250)
+    result = h.call(h.registry.top_up_stake, "model-1", value=250)
+    assert result["accepted"] is False
+    assert result["reason"] == "CALLER_NOT_MODEL_CREATOR"
+    assert result["refund_credited"] == 250
+    assert h.registry.get_model("model-1")["deposit"] == 1000
+    assert h.registry.check_invariants(50)["ok"] is True
 
 
 def test_top_up_rejects_zero_value(direct_vm, direct_deploy, direct_alice):
     h = Harness(direct_vm, direct_deploy)
     h.register(direct_alice)
     h.as_(direct_alice)
-    with reverted(direct_vm, "top up must be positive"):
-        h.call(h.registry.top_up_stake, "model-1", value=0)
+    result = h.call(h.registry.top_up_stake, "model-1", value=0)
+    assert result["accepted"] is False
+    assert result["reason"] == "TOP_UP_MUST_BE_POSITIVE"
+    assert result["refund_credited"] == 0
 
 
 def test_invalid_message_datetime_fails_closed(direct_vm, direct_deploy, direct_alice):
@@ -221,10 +263,13 @@ def test_invalid_message_datetime_fails_closed(direct_vm, direct_deploy, direct_
     # The transaction datetime is the only clock the contract trusts, and the
     # registration path reads it before it writes any state.
     direct_vm.warp("not-a-date")
-    with reverted(direct_vm, "transaction datetime is invalid"):
-        h.register(direct_alice, model_id="model-2", digests=CLAIM_NONE)
+    result = h.register(direct_alice, model_id="model-2", digests=CLAIM_NONE)
+    assert result["accepted"] is False
+    assert result["reason"] == "INVALID_TRANSACTION_CLOCK"
+    assert result["refund_credited"] == 1000
     assert h.registry.get_config()["model_count"] == 1
     assert h.registry.get_config()["total_locked"] == 1000
+    assert h.registry.check_invariants(50)["ok"] is True
 
 
 def test_update_listing_requires_creator(direct_vm, direct_deploy, direct_alice, direct_bob):
@@ -281,50 +326,71 @@ def test_claim_matching_nothing_records_zero(direct_vm, direct_deploy, direct_al
 def test_creator_cannot_dispute_own_model(direct_vm, direct_deploy, direct_alice):
     h = Harness(direct_vm, direct_deploy)
     h.register(direct_alice)
-    with reverted(direct_vm, "creator cannot dispute their own model"):
-        h.dispute(direct_alice)
+    result = h.dispute(direct_alice)
+    assert result["accepted"] is False
+    assert result["reason"] == "SELF_DISPUTE"
+    assert result["refund_credited"] == 1000
+    assert h.registry.get_config()["dispute_count"] == 0
 
 
 def test_open_dispute_requires_minimum_stake(direct_vm, direct_deploy, direct_alice, direct_bob):
     h = Harness(direct_vm, direct_deploy)
     h.register(direct_alice)
-    with reverted(direct_vm, "stake below minimum dispute stake"):
-        h.dispute(direct_bob, stake=499)
+    result = h.dispute(direct_bob, stake=499)
+    assert result["accepted"] is False
+    assert result["reason"] == "INSUFFICIENT_DISPUTE_BOND"
+    assert result["refund_credited"] == 499
+    assert h.registry.get_config()["dispute_count"] == 0
 
 
 def test_open_dispute_requires_a_full_bond(direct_vm, direct_deploy, direct_alice, direct_bob):
     h = Harness(direct_vm, direct_deploy)
-    h.register(direct_alice, stake=1500)
+    h.register(direct_alice)
+    h.as_(direct_alice)
+    h.call(h.registry.top_up_stake, "model-1", value=500)
+    assert h.registry.get_model("model-1")["deposit"] == 1500
 
     # The stake clears the global floor but does not cover the deposit it attacks,
-    # so a cheap accusation against a large stake is rejected.
-    with reverted(direct_vm, "challenger stake must cover the model deposit"):
-        h.dispute(direct_bob, stake=1000)
+    # so a cheap accusation against a large stake is refused and refunded.
+    result = h.dispute(direct_bob, stake=1000)
+    assert result["accepted"] is False
+    assert result["reason"] == "BOND_BELOW_MODEL_DEPOSIT"
+    assert result["refund_credited"] == 1000
     assert h.registry.get_config()["dispute_count"] == 0
 
     info = h.dispute(direct_bob, stake=1500)
+    assert info["accepted"] is True
     assert info["challenger_stake"] == 1500
+    assert h.registry.check_invariants(50)["ok"] is True
 
 
 def test_only_one_open_dispute_per_model(direct_vm, direct_deploy, direct_alice, direct_bob):
     h = Harness(direct_vm, direct_deploy)
     h.register(direct_alice)
     h.dispute(direct_bob)
-    with reverted(direct_vm, "model already has an open dispute"):
-        h.dispute(direct_bob, claim=CLAIM_FULL)
+    result = h.dispute(direct_bob, claim=CLAIM_FULL)
+    assert result["accepted"] is False
+    assert result["reason"] == "OPEN_DISPUTE_EXISTS"
+    assert result["refund_credited"] == 1000
+    assert h.registry.get_config()["dispute_count"] == 1
 
 
 def test_open_dispute_rejects_unsafe_challenger_url(direct_vm, direct_deploy, direct_alice, direct_bob):
     h = Harness(direct_vm, direct_deploy)
     h.register(direct_alice)
-    with reverted(direct_vm, "challenger benchmark url"):
-        h.dispute(direct_bob, benchmark="http://challenger.example.org/bench.json")
+    result = h.dispute(direct_bob, benchmark="http://challenger.example.org/bench.json")
+    assert result["accepted"] is False
+    assert result["reason"] == "INVALID_CHALLENGER_BENCHMARK_URL"
+    assert result["refund_credited"] == 1000
 
 
 def test_dispute_requires_registered_model(direct_vm, direct_deploy, direct_bob):
     h = Harness(direct_vm, direct_deploy)
-    with reverted(direct_vm, "unknown model"):
-        h.dispute(direct_bob, model_id="missing-model")
+    result = h.dispute(direct_bob, model_id="missing-model")
+    assert result["accepted"] is False
+    assert result["reason"] == "UNKNOWN_MODEL"
+    assert result["refund_credited"] == 1000
+    assert h.registry.check_invariants(50)["ok"] is True
 
 
 def test_open_dispute_rejects_deregistered_model(direct_vm, direct_deploy, direct_alice, direct_bob):
@@ -335,8 +401,11 @@ def test_open_dispute_rejects_deregistered_model(direct_vm, direct_deploy, direc
     direct_vm.warp("2026-01-01T01:00:01Z")
     h.call(h.registry.finalize_deregistration, "model-1")
 
-    with reverted(direct_vm, "model is deregistered"):
-        h.dispute(direct_bob)
+    result = h.dispute(direct_bob)
+    assert result["accepted"] is False
+    assert result["reason"] == "DEREGISTERED_MODEL"
+    assert result["refund_credited"] == 1000
+    assert h.registry.check_invariants(50)["ok"] is True
 
 
 def test_dispute_totals_are_tracked(direct_vm, direct_deploy, direct_alice, direct_bob):
@@ -463,8 +532,12 @@ def test_pause_blocks_registration_but_not_audit(direct_vm, direct_deploy, direc
     h.call(h.registry.set_paused, True)
 
     h.as_(direct_alice)
-    with reverted(direct_vm, "registry is paused"):
-        h.register(direct_alice, model_id="model-2")
+    paused = h.register(direct_alice, model_id="model-2")
+    assert paused["accepted"] is False
+    assert paused["reason"] == "PAUSED"
+    assert paused["refund_credited"] == 1000
+    assert h.registry.get_refundable_balance(addr_hex(direct_alice))["refundable_balance"] == 1000
+    assert h.registry.get_config()["model_count"] == 1
 
     h.as_(direct_bob)
     result = h.call(h.registry.audit_model_similarity_live, info["dispute_id"])
@@ -507,9 +580,18 @@ def test_owner_cannot_settle_or_touch_escrow(direct_vm, direct_deploy, direct_al
     assert h.registry.get_model("model-1")["deposit"] == 1000
 
 
-def test_value_on_non_payable_method_reverts(direct_vm, direct_deploy, direct_alice):
+def test_value_on_non_payable_method_is_credited(direct_vm, direct_deploy, direct_alice):
     h = Harness(direct_vm, direct_deploy)
     h.register(direct_alice)
+    before = h.registry.get_model("model-1")["benchmark_url"]
+
     h.as_(direct_alice)
-    with reverted(direct_vm, "method does not accept value"):
-        h.call(h.registry.update_listing, "model-1", CREATOR_META, CREATOR_BENCH, "mit", value=5)
+    result = h.call(h.registry.update_listing, "model-1", CREATOR_META, CREATOR_BENCH, "mit", value=5)
+    assert result["accepted"] is False
+    assert result["reason"] == "VALUE_NOT_ACCEPTED"
+    assert result["refund_credited"] == 5
+
+    # The call is refused, not partially applied, and the value is recoverable.
+    assert h.registry.get_model("model-1")["benchmark_url"] == before
+    assert h.registry.get_refundable_balance(addr_hex(direct_alice))["refundable_balance"] == 5
+    assert h.registry.check_invariants(50)["ok"] is True

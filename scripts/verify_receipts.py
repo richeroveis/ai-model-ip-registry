@@ -10,6 +10,7 @@ Usage:
     python scripts/verify_receipts.py
 """
 
+import argparse
 import json
 import sys
 import time
@@ -44,9 +45,18 @@ def fetch(client, tx_hash: str) -> dict:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Re-verify recorded transactions")
+    parser.add_argument("--sources", default=",".join(str(path.relative_to(ROOT)) for path in SOURCES),
+                        help="comma separated evidence files")
+    parser.add_argument("--out", default=str(OUT_PATH.relative_to(ROOT)),
+                        help="output receipt file")
+    args = parser.parse_args()
+    sources = [ROOT / item.strip() for item in args.sources.split(",") if item.strip()]
+    out_path = ROOT / args.out
+
     client = create_client(chain=studionet, account=Account.from_key(load_env()["GENLAYER_PRIVATE_KEY"]))
     rows = []
-    for source in SOURCES:
+    for source in sources:
         if not source.exists():
             continue
         payload = json.loads(source.read_text(encoding="utf-8"))
@@ -88,9 +98,9 @@ def main() -> int:
             print("{0:<32} {1:<12} {2:<18} {3}".format(
                 row["label"], row["status"], row["result"], row["execution_result"]))
 
-    OUT_PATH.write_text(json.dumps({"network": "studionet", "transactions": rows}, indent=2,
+    out_path.write_text(json.dumps({"network": "studionet", "transactions": rows}, indent=2,
                                    sort_keys=True) + "\n", encoding="utf-8")
-    print("\n{0} receipts verified, written to {1}".format(len(rows), OUT_PATH))
+    print("\n{0} receipts verified, written to {1}".format(len(rows), out_path))
     return 0
 
 

@@ -14,24 +14,29 @@ The AI layer only classifies. It never decides amounts: every tier maps to a
 fixed split table, and the split is re-derived deterministically after
 consensus.
 
+No payable path reverts while value is attached. A refused registration,
+top-up or dispute returns a structured rejection, records the reason, and
+credits the whole attached amount to the sender's refundable balance, which can
+be withdrawn at any time.
+
 ## Live deployment (studionet)
 
 | Item | Value |
 | --- | --- |
 | Network | studionet, chain id 61999 |
-| Contract | `0xa8a2B23e69D2093fE6f496e59367974572775833` |
-| Deploy tx | `0x8dbcc7bdb30289929812925b76481c480d53f0d1e998f0654801a6e17c2fca8c` |
-| Contract file sha256 | `a42d2a96aafaf7967ee5e4070fc13ec2cc2bf5dd3abfa40baf1e77be091c35f1` |
+| Contract | `0xfdE499c7ef1D13BaD93c31598414E5839b6028c2` |
+| Deploy tx | `0x3459d17f1f272bfd5b0810f354f628a98a6b089fa1f07230b5b65596f2644a51` |
+| Contract file sha256 (LF) | `21267858bb1b4f6f08fa339bcc2380339664b2834b2fc2d8b66d9aeca13f6eae` |
 | Runner | `py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6` |
-| Source binding | tag `studionet-v1` in this repository |
-| Live audit result | `EXACT_PLAGIARISM`, challenger `170000000000000000` wei, creator `30000000000000000` wei |
-| Wallet payout delta | exactly `170000000000000000` wei, credited to the challenger wallet |
-| Accounting invariant | `total_locked = 30000000000000000 = contract balance`, `solvency_gap = 0` |
-| Time boundaries | early finalize and early expire revert; late finalize and late expire refund exactly, final locked `130000000000000000` wei |
+| Source binding | tag `studionet-v2-joaquin-fix`, plus the source bytes in the deploy calldata |
+| Rejected payable paths verified live | 6: duplicate id, short bond, invalid url, paused, short dispute bond, open dispute race |
+| Refund recovery verified live | 2 withdrawals, wallet deltas of exactly `220000000000000000` and `390000000000000000` wei, both balances back to 0 |
+| Live audit result | `EXACT_PLAGIARISM`, challenger `170000000000000000` wei, creator `30000000000000000` wei, `FINALIZED` and `MAJORITY_AGREE` |
+| Custody identity | `locked 130000000000000000 = contract balance`, `refundable 0`, `surplus 0`, `accounting_identity_ok = true` |
 
-Transaction level evidence, including the four way identity read back from the
-contract and the one hour time boundary run, is in
-[docs/evidence.md](docs/evidence.md).
+Transaction level evidence, including every rejection, both withdrawals and the
+four way source hash, is in [docs/evidence.md](docs/evidence.md). The v1
+artifacts and the two aborted v2 attempts are summarised in section 11.
 
 ## Why GenLayer
 
@@ -98,6 +103,64 @@ of the pot:
 - `total_locked` and `total_paid_out` are updated on every transition and are
   checked by `check_invariants`.
 
+## Refunds and payable safety
+
+GenLayer moves attached value before the method body runs. A raise would
+roll back the ledger entry while the value stays in the contract, so every
+payable entry point is written to refuse without reverting.
+
+The payable surface is exactly three methods: `register_model`, `top_up_stake`
+and `open_dispute`. Each one validates first and, on any refusal, calls one
+internal helper that:
+
+1. credits the full attached value to `refundable_balances[sender]`,
+2. increments `total_refundable_custody` and the `vault_custody_balance` mirror,
+3. stores the reason in `last_payable_rejection[sender]` and increments
+   `rejected_payable_count`,
+4. emits `PayableRejected` and returns
+   `{accepted: false, reason, refund_credited, refundable_balance}`.
+
+Refusal reasons covered: `PAUSED`, `DUPLICATE_MODEL_ID`, `DUPLICATE_IDENTITY`,
+`INVALID_MODEL_ID`, `INVALID_*_DIGEST`, `INVALID_METADATA_URL`,
+`INVALID_BENCHMARK_URL`, `INVALID_CHALLENGER_*_URL`, `INVALID_LICENSE_TERMS`,
+`INVALID_EVIDENCE_NOTE`, `INVALID_TRANSACTION_CLOCK`, `UNKNOWN_MODEL`,
+`DEREGISTERED_MODEL`, `SELF_DISPUTE`, `OPEN_DISPUTE_EXISTS`,
+`INSUFFICIENT_REGISTRATION_BOND`, `INSUFFICIENT_DISPUTE_BOND`,
+`BOND_BELOW_MODEL_DEPOSIT`, `CALLER_NOT_MODEL_CREATOR` and
+`TOP_UP_MUST_BE_POSITIVE`. Value attached to any non payable write (for example
+`update_listing` or `audit_model_similarity_live`) is credited the same way with
+`VALUE_NOT_ACCEPTED`.
+
+Excess value is never locked. Registration locks exactly
+`min_registration_stake`; a dispute locks exactly
+`max(min_dispute_stake, model.deposit)`. Anything above that is credited back in
+the same transaction. `top_up_stake` is intentional value, so all of it is
+locked.
+
+Recovery paths:
+
+- `withdraw_refund(amount)` pays the caller, or the whole balance when `amount`
+  is 0, through the external EVM message path. `claim_refundable_balance()` is
+  the no argument alias.
+- `record_or_recover_unaccounted_value(recipient)` is owner only. It converts a
+  measured surplus (contract balance minus locked bonds minus refundable
+  custody) into a refund credit for `recipient`. It is capped at that surplus
+  and can never touch a bond or an existing credit. It exists for value that
+  arrived outside the payable surface, for example a plain native transfer to
+  the contract.
+
+Custody identity, enforced by `check_invariants` and
+`get_custody_accounting_summary`:
+
+```
+vault_custody_balance
+  == active_registration_bonds + active_dispute_bonds + royalty_escrow + total_refundable_custody
+  == contract balance
+```
+
+`royalty_escrow` is a constant 0 because the registry has no royalty path. Any
+nonzero surplus or shortfall makes `check_invariants` fail.
+
 ## Consensus design
 
 `audit_model_similarity_live(dispute_id)`:
@@ -158,7 +221,10 @@ The owner can update the four bounded parameters (both stake floors, the audit
 window between 1 hour and 30 days, the exit delay between 1 hour and 90 days),
 pause registration and disputes, and hand over ownership in two steps. The
 owner cannot touch escrow, disputes, settlement terms, payouts, the split table
-or a committed identity. There is no unilateral override anywhere in the
+or a committed identity. The only value movement the owner can trigger is
+`record_or_recover_unaccounted_value`, which is capped at a measured surplus
+that no ledger entry attributes to anyone, and therefore cannot reach a bond or
+a refund credit. There is no unilateral settlement override anywhere in the
 contract.
 
 ## Contract API
@@ -181,6 +247,9 @@ Writes:
 | `set_parameters` | Owner, bounded |
 | `set_paused` | Owner |
 | `transfer_ownership` / `accept_ownership` | Two step handover |
+| `withdraw_refund(amount)` | Pay a credited refund, whole balance when amount is 0 |
+| `claim_refundable_balance` | No argument alias for a full withdrawal |
+| `record_or_recover_unaccounted_value(recipient)` | Owner only, capped at the measured surplus |
 
 Views:
 
@@ -192,7 +261,10 @@ Views:
 | `get_dispute_evidence` | Both evidence sets side by side |
 | `get_four_way_identity` | Re-derived identity and validity |
 | `verify_sha256_identity` | Compare a supplied four tuple |
-| `check_invariants` | Full ledger and identity sweep |
+| `get_refundable_balance(address)` | Credited refund balance and last reason |
+| `get_last_payable_rejection(address)` | Last refusal code and counters |
+| `get_custody_accounting_summary` | Every custody term and the identity flag |
+| `check_invariants` | Full ledger, refund and identity sweep |
 
 ## Repository layout
 
@@ -200,9 +272,11 @@ Views:
 contracts/AIModelIPRegistry.py     the contract
 tests/test_registry.py             registration, validation, lifecycle, owner surface
 tests/test_settlement.py           audit, mutual settlement, expiry, invariants
+tests/test_refunds.py              every payable refusal, withdrawal and custody term
 tests/support.py                   direct mode harness and chain hook
 conftest.py                        Windows fd0 fix and the direct mode EVM stub
-scripts/deploy_studionet.py        deploy and drive the live scenario
+scripts/deploy_studionet.py        deploy and drive the v1 live scenario
+scripts/verify_joaquin_fix.py      deploy and drive the v2 refund scenario
 scripts/verify_time_boundaries.py  live early and late time boundary run
 scripts/verify_boundary_closeout.py  finish the recorded boundary run and verify its credits
 scripts/verify_receipts.py         re-check every tx against the node RPC
@@ -220,7 +294,7 @@ Python 3.13 and the pinned tool versions:
 python -m pip install "genlayer-py==0.16.3" "genlayer-test==0.29.2" genvm-lint
 ```
 
-Direct tests (98 tests, no network):
+Direct tests (142 tests, no network):
 
 ```
 python -m pytest -q -p no:cacheprovider
@@ -232,17 +306,18 @@ Lint and static validation:
 genvm-lint check contracts/AIModelIPRegistry.py
 ```
 
-Expected output: `Lint passed (3 checks)` and `Validation passed, 24 methods
-(9 view, 15 write)`.
+Expected output: `Lint passed (3 checks)` and `Validation passed, 30 methods
+(12 view, 18 write)`.
 
-Deploy and drive the live scenario. The script reads `GENLAYER_PRIVATE_KEY`
-from this project's own `.env`, never prints it, and writes
-`deployment/studionet.json`:
+Deploy and drive the live scenario. The scripts read `GENLAYER_PRIVATE_KEY`
+from this project's own `.env`, never print it, and write their evidence file:
 
 ```
-python scripts/deploy_studionet.py
-python scripts/verify_receipts.py
+python scripts/verify_joaquin_fix.py
+python scripts/verify_receipts.py --sources deployment/joaquin_fix.json --out deployment/receipts_v2.json
 ```
+
+The v1 scenario remains reproducible with `python scripts/deploy_studionet.py`.
 
 The time boundary script runs for about an hour because the contract enforces
 one hour floors on both the audit window and the exit delay:
@@ -256,24 +331,27 @@ python scripts/verify_time_boundaries.py
 - Line 1 of the contract is the pinned runner header. GenVM parses the entire
   leading comment block as that JSON header, so all prose lives in the module
   docstring. Adding a comment line after the header silently breaks deployment.
-- `contracts/AIModelIPRegistry.py` is stored byte for byte as deployed,
-  including CRLF line endings. `.gitattributes` exempts that one file from EOL
-  normalization so its blob keeps the sha256 above; an LF normalized copy would
-  hash differently. Every other text file is normalized to LF.
+- `contracts/AIModelIPRegistry.py` is stored as LF and `.gitattributes` applies
+  `* text=auto eol=lf` to everything. The working file, the git blob, the blob
+  on `origin/main` and the source item in the deploy transaction all hash to
+  `21267858...`. v1 was CRLF on disk but LF in the deploy calldata, which is why
+  the two hashes differed there.
 - `gen_call` on studionet rejects RLP wrapped payloads above roughly 300 bytes.
-  `scripts/deploy_studionet.py` sends bare calldata for reads, which the node
-  accepts and which is the same codec output before wrapping.
+  The scripts send bare calldata for reads, which the node accepts and which is
+  the same codec output before wrapping.
+- studionet shares a request budget across callers and answers with
+  `Rate limit exceeded: 500 requests per hour` once it is spent. The v2 script
+  retries only TLS and gateway drops, never a rate limit answer, and polls
+  receipts less often so a run fits in one budget.
 - gltest direct mode has no EVM layer. `conftest.py` installs a small stub for
   `gl.evm` so the ledger tests can assert payout amounts. The live run is the
   proof of the real external message path.
-- The explorer deployment was paused during the evidence run, so every
+- The explorer deployment was unavailable during the evidence run, so every
   transaction was re-verified through the studionet JSON-RPC instead. The
   explorer links are still recorded in the evidence files.
 - Payouts are external EVM messages that execute after the transaction
   finalizes, so a balance sampled once right after the receipt can still be the
-  pre credit value. The scenario scripts poll for the credit and, where
-  studionet does not serve historical balances, prove it from the triggered
-  message.
+  pre credit value. The scenario scripts poll for the credit.
 
 ## Limits
 
@@ -288,6 +366,12 @@ python scripts/verify_time_boundaries.py
   stays available after the cooldown.
 - The contract has no upgrade path. A new version means a new deployment and a
   new identity commitment.
-- On studionet, a payable call that reverts keeps the value in the contract's
-  ghost. Clients and scripts must not attach value to a call they expect to
-  fail. `check_invariants` reports any such surplus as an invariant violation.
+- Every payable refusal is recoverable by the sender. A value transfer that is
+  not a contract call at all (a plain native transfer to the contract address)
+  is not attributed to any sender; `check_invariants` reports it as a surplus
+  and `record_or_recover_unaccounted_value` can turn it into a refund credit
+  for a chosen address. That is the only reason the owner has any value moving
+  function, and it cannot touch a bond or an existing credit.
+- An external payout message that fails at the platform layer cannot be
+  observed by the contract. The live run proves the path credits correctly; a
+  delivery failure would leave the value in the ghost and show up as a surplus.

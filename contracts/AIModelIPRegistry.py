@@ -15,6 +15,15 @@ Trust model
     validator measures the same clock.
   * Committed 4-way sha256 identity is re-derived on every read and settlement, so
     a corrupted or forged storage field is detected instead of trusted.
+  * No payable path reverts while value is attached. Value moves before the body
+    runs, so a raise would strand it; instead the call returns a rejection with a
+    stable code and credits the full amount to the sender's refundable balance,
+    withdrawable at any time through `withdraw_refund` or
+    `claim_refundable_balance`.
+  * Custody identity, enforced by `check_invariants` and
+    `get_custody_accounting_summary`:
+    contract balance == locked bonds + refundable custody (royalty escrow is 0).
+    Excess over a required bond is credited back immediately, never locked.
 
 Operational note: the leading comment block is parsed by GenVM as the runner
 header, so all prose lives in this docstring rather than in comments above the
@@ -60,6 +69,48 @@ ERROR_EXPECTED = "[EXPECTED]"
 ERROR_EXTERNAL = "[EXTERNAL]"
 ERROR_TRANSIENT = "[TRANSIENT]"
 ERROR_LLM = "[LLM_ERROR]"
+
+# Payable rejection codes. A payable method never raises while value is attached,
+# because the chain has already moved the value before the body runs and a raise
+# would roll back the ledger entry while the value stays in the contract. Every
+# rejection returns a stable machine readable code instead, and the attached
+# value is credited to the sender's refundable balance.
+REJECT_PAUSED = "PAUSED"
+REJECT_VALUE_NOT_ACCEPTED = "VALUE_NOT_ACCEPTED"
+REJECT_DUPLICATE_MODEL_ID = "DUPLICATE_MODEL_ID"
+REJECT_DUPLICATE_IDENTITY = "DUPLICATE_IDENTITY"
+REJECT_INVALID_MODEL_ID = "INVALID_MODEL_ID"
+REJECT_INVALID_WEIGHTS = "INVALID_WEIGHTS_DIGEST"
+REJECT_INVALID_DATASET = "INVALID_DATASET_DIGEST"
+REJECT_INVALID_CONFIG = "INVALID_CONFIG_DIGEST"
+REJECT_INVALID_CARD = "INVALID_CARD_DIGEST"
+REJECT_INVALID_METADATA_URL = "INVALID_METADATA_URL"
+REJECT_INVALID_BENCHMARK_URL = "INVALID_BENCHMARK_URL"
+REJECT_INVALID_CHALLENGER_METADATA_URL = "INVALID_CHALLENGER_METADATA_URL"
+REJECT_INVALID_CHALLENGER_BENCHMARK_URL = "INVALID_CHALLENGER_BENCHMARK_URL"
+REJECT_INVALID_LICENSE = "INVALID_LICENSE_TERMS"
+REJECT_INVALID_EVIDENCE_NOTE = "INVALID_EVIDENCE_NOTE"
+REJECT_UNKNOWN_MODEL = "UNKNOWN_MODEL"
+REJECT_DEREGISTERED_MODEL = "DEREGISTERED_MODEL"
+REJECT_SELF_DISPUTE = "SELF_DISPUTE"
+REJECT_OPEN_DISPUTE = "OPEN_DISPUTE_EXISTS"
+REJECT_REGISTRATION_BOND = "INSUFFICIENT_REGISTRATION_BOND"
+REJECT_DISPUTE_BOND = "INSUFFICIENT_DISPUTE_BOND"
+REJECT_FULL_BOND = "BOND_BELOW_MODEL_DEPOSIT"
+REJECT_INVALID_CLOCK = "INVALID_TRANSACTION_CLOCK"
+REJECT_NON_CREATOR = "CALLER_NOT_MODEL_CREATOR"
+REJECT_ZERO_TOP_UP = "TOP_UP_MUST_BE_POSITIVE"
+REJECT_INVALID_ADDRESS = "INVALID_ADDRESS"
+REJECT_INSUFFICIENT_REFUNDABLE = "INSUFFICIENT_REFUNDABLE_BALANCE"
+REJECT_NO_REFUNDABLE = "NO_REFUNDABLE_BALANCE"
+REJECT_NEGATIVE_AMOUNT = "NEGATIVE_AMOUNT"
+REJECT_NO_SURPLUS = "NO_UNACCOUNTED_SURPLUS"
+REASON_REGISTRATION_EXCESS = "REGISTRATION_EXCESS"
+REASON_DISPUTE_EXCESS = "DISPUTE_EXCESS"
+REASON_UNACCOUNTED_RECOVERY = "UNACCOUNTED_VALUE_RECOVERY"
+# The registry escrows bonds only. The field exists so the custody identity is
+# explicit and stays valid if a royalty escrow is ever added.
+ROYALTY_ESCROW = 0
 
 BPS_DENOMINATOR = 10000
 MAX_URL_LEN = 512
@@ -171,6 +222,11 @@ def _as_address(value) -> Address:
     if isinstance(value, str):
         return Address(value)
     raise gl.vm.UserError(ERROR_EXPECTED + " address argument has an unsupported type")
+
+
+def _address_key(value) -> str:
+    """Canonical lowercase hex key for a refund ledger entry."""
+    return "0x" + bytes(_as_address(value).as_bytes).hex()
 
 
 def _send_external_value(recipient: Address, amount: int) -> None:
@@ -467,6 +523,22 @@ class PayoutIssued(gl.Event):
     def __init__(self, dispute_id: str, /, **blob): ...
 
 
+class PayableRejected(gl.Event):
+    def __init__(self, sender: str, /, **blob): ...
+
+
+class RefundCredited(gl.Event):
+    def __init__(self, sender: str, /, **blob): ...
+
+
+class RefundWithdrawn(gl.Event):
+    def __init__(self, sender: str, /, **blob): ...
+
+
+class UnaccountedValueRecovered(gl.Event):
+    def __init__(self, recipient: str, /, **blob): ...
+
+
 class ConfigUpdated(gl.Event):
     def __init__(self, key: str, /, **blob): ...
 
@@ -496,6 +568,17 @@ class AIModelIPRegistry(gl.Contract):
     disputes: TreeMap[str, DisputeRecord]
     open_dispute_of_model: TreeMap[str, str]
     identity_owner: TreeMap[str, str]
+    # Refund ledger. Value that reached the contract but was not accepted as a
+    # bond is never left unaccounted: it is credited here, keyed by the sender's
+    # canonical address, and can be withdrawn at any time.
+    refundable_balances: TreeMap[str, u256]
+    refund_holders: DynArray[str]
+    refund_indexed: TreeMap[str, u256]
+    last_payable_rejection: TreeMap[str, str]
+    rejected_payable_count: u256
+    total_refundable_custody: u256
+    total_refunded_out: u256
+    vault_custody_balance: u256
 
     def __init__(self, min_registration_stake: u256, min_dispute_stake: u256,
                  audit_window_secs: u256, exit_delay_secs: u256) -> None:
@@ -523,6 +606,10 @@ class AIModelIPRegistry(gl.Contract):
         self.total_locked = u256(0)
         self.total_paid_out = u256(0)
         self.dispute_seq = u256(0)
+        self.rejected_payable_count = u256(0)
+        self.total_refundable_custody = u256(0)
+        self.total_refunded_out = u256(0)
+        self.vault_custody_balance = u256(0)
 
     # ------------------------------------------------------------------
     # Internal guards
@@ -548,13 +635,96 @@ class AIModelIPRegistry(gl.Contract):
     def _caller(self) -> Address:
         return gl.message.sender_address
 
-    def _reject_value(self) -> None:
-        if int(gl.message.value) != 0:
-            raise gl.vm.UserError(ERROR_EXPECTED + " method does not accept value")
+    # ------------------------------------------------------------------
+    # Payable safety. Value moves before the method body runs, so a raise
+    # would leave it in the contract with no ledger entry. These helpers
+    # record the rejection and credit the sender instead, and the sender can
+    # withdraw at any time.
+    # ------------------------------------------------------------------
+    def _address_text_key(self, text: str) -> str:
+        raw = text.strip().lower() if isinstance(text, str) else ""
+        if raw.startswith("0x"):
+            raw = raw[2:]
+        if len(raw) != 40:
+            raise gl.vm.UserError(ERROR_EXPECTED + " address must be 20 bytes")
+        for ch in raw:
+            if ch not in "0123456789abcdef":
+                raise gl.vm.UserError(ERROR_EXPECTED + " address must be hexadecimal")
+        return "0x" + raw
 
-    def _require_not_paused(self) -> None:
-        if self.paused:
-            raise gl.vm.UserError(ERROR_EXPECTED + " registry is paused")
+    def _credit_refund_key(self, key: str, amount: int, reason: str) -> int:
+        """Credit one address key and keep every custody counter in step."""
+        if amount <= 0:
+            return 0
+        current = int(self.refundable_balances.get(key, u256(0)))
+        if int(self.refund_indexed.get(key, u256(0))) == 0:
+            self.refund_holders.append(key)
+            self.refund_indexed[key] = u256(1)
+        self.refundable_balances[key] = u256(current + amount)
+        self.total_refundable_custody = u256(int(self.total_refundable_custody) + amount)
+        self.vault_custody_balance = u256(int(self.vault_custody_balance) + amount)
+        RefundCredited(key, amount=u256(amount), reason=reason).emit()
+        return amount
+
+    def _credit_refund(self, sender: Address, amount: int, reason: str) -> int:
+        return self._credit_refund_key(_address_key(sender), int(amount), reason)
+
+    def _reject_payable_and_credit_refund(self, sender: Address, attached_value: int,
+                                          reason: str) -> dict:
+        """Reject a payable call without reverting, keeping all value accounted."""
+        key = _address_key(sender)
+        value = int(attached_value)
+        credited = 0
+        if value > 0:
+            credited = self._credit_refund_key(key, value, reason)
+        self.last_payable_rejection[key] = reason
+        self.rejected_payable_count = u256(int(self.rejected_payable_count) + 1)
+        PayableRejected(key, reason=reason, refund_credited=u256(credited)).emit()
+        return {
+            "accepted": False,
+            "reason": reason,
+            "refund_credited": credited,
+            "refundable_balance": int(self.refundable_balances.get(key, u256(0))),
+            "rejected_payable_count": int(self.rejected_payable_count),
+        }
+
+    def _guard_nonpayable(self) -> dict:
+        """Value attached to a non payable method is credited, never trapped."""
+        value = int(gl.message.value)
+        if value == 0:
+            return {}
+        return self._reject_payable_and_credit_refund(self._caller(), value,
+                                                     REJECT_VALUE_NOT_ACCEPTED)
+
+    def _check_model_id(self, value: str) -> tuple:
+        try:
+            return self._validate_model_id(value), ""
+        except gl.vm.UserError:
+            return "", REJECT_INVALID_MODEL_ID
+
+    def _check_digest(self, value: str, label: str, code: str) -> tuple:
+        try:
+            return self._validate_digest(value, label), ""
+        except gl.vm.UserError:
+            return "", code
+
+    def _check_url(self, value: str, label: str, code: str) -> tuple:
+        try:
+            return self._validate_url(value, label), ""
+        except gl.vm.UserError:
+            return "", code
+
+    def _check_text(self, value: str, label: str, max_len: int, code: str) -> tuple:
+        try:
+            return self._validate_short_text(value, label, max_len), ""
+        except gl.vm.UserError:
+            return "", code
+
+    def _check_now(self) -> tuple:
+        try:
+            return self._now(), ""
+        except gl.vm.UserError:
+            return 0, REJECT_INVALID_CLOCK
 
     def _require_owner(self) -> None:
         if self._caller() != self.owner:
@@ -588,6 +758,7 @@ class AIModelIPRegistry(gl.Contract):
             return
         _send_external_value(to, amount)
         self.total_paid_out = u256(int(self.total_paid_out) + amount)
+        self.vault_custody_balance = u256(int(self.vault_custody_balance) - amount)
         PayoutIssued(dispute_id, to=to, amount=u256(amount), reason=reason).emit()
 
     def _validate_short_text(self, value: str, label: str, max_len: int) -> str:
@@ -652,32 +823,58 @@ class AIModelIPRegistry(gl.Contract):
     def register_model(self, model_id: str, weights_sha256: str, dataset_sha256: str,
                        config_sha256: str, card_sha256: str, metadata_url: str,
                        benchmark_url: str, license_terms: str) -> dict:
-        self._require_not_paused()
-        mid = self._validate_model_id(model_id)
+        caller = self._caller()
+        value = int(gl.message.value)
+        if self.paused:
+            return self._reject_payable_and_credit_refund(caller, value, REJECT_PAUSED)
+
+        mid, bad = self._check_model_id(model_id)
+        if bad:
+            return self._reject_payable_and_credit_refund(caller, value, bad)
         if mid in self.models:
-            raise gl.vm.UserError(ERROR_EXPECTED + " model id already registered")
+            return self._reject_payable_and_credit_refund(caller, value, REJECT_DUPLICATE_MODEL_ID)
 
-        weights = self._validate_digest(weights_sha256, "weights digest")
-        dataset = self._validate_digest(dataset_sha256, "dataset digest")
-        config = self._validate_digest(config_sha256, "config digest")
-        card = self._validate_digest(card_sha256, "card digest")
-        metadata = self._validate_url(metadata_url, "metadata url")
-        benchmark = self._validate_url(benchmark_url, "benchmark url")
-        license_text = self._validate_short_text(license_terms, "license terms", MAX_SHORT_TEXT)
+        weights, bad = self._check_digest(weights_sha256, "weights digest", REJECT_INVALID_WEIGHTS)
+        if bad:
+            return self._reject_payable_and_credit_refund(caller, value, bad)
+        dataset, bad = self._check_digest(dataset_sha256, "dataset digest", REJECT_INVALID_DATASET)
+        if bad:
+            return self._reject_payable_and_credit_refund(caller, value, bad)
+        config, bad = self._check_digest(config_sha256, "config digest", REJECT_INVALID_CONFIG)
+        if bad:
+            return self._reject_payable_and_credit_refund(caller, value, bad)
+        card, bad = self._check_digest(card_sha256, "card digest", REJECT_INVALID_CARD)
+        if bad:
+            return self._reject_payable_and_credit_refund(caller, value, bad)
+        metadata, bad = self._check_url(metadata_url, "metadata url", REJECT_INVALID_METADATA_URL)
+        if bad:
+            return self._reject_payable_and_credit_refund(caller, value, bad)
+        benchmark, bad = self._check_url(benchmark_url, "benchmark url", REJECT_INVALID_BENCHMARK_URL)
+        if bad:
+            return self._reject_payable_and_credit_refund(caller, value, bad)
+        license_text, bad = self._check_text(license_terms, "license terms", MAX_SHORT_TEXT,
+                                             REJECT_INVALID_LICENSE)
+        if bad:
+            return self._reject_payable_and_credit_refund(caller, value, bad)
 
-        stake = int(gl.message.value)
-        minimum = int(self.min_registration_stake)
-        if stake < minimum:
-            raise gl.vm.UserError(ERROR_EXPECTED + " stake below minimum registration stake")
+        # The bond is exactly the configured minimum. Anything above it is not a
+        # bond, so it is credited back to the sender instead of being locked.
+        stake = int(self.min_registration_stake)
+        if value < stake:
+            return self._reject_payable_and_credit_refund(caller, value, REJECT_REGISTRATION_BOND)
 
         identity = _identity_digest(weights, dataset, config, card)
         if identity in self.identity_owner:
-            raise gl.vm.UserError(ERROR_EXPECTED + " identity is already registered")
+            return self._reject_payable_and_credit_refund(caller, value, REJECT_DUPLICATE_IDENTITY)
 
-        now = self._now()
+        now, bad = self._check_now()
+        if bad:
+            return self._reject_payable_and_credit_refund(caller, value, bad)
+        excess = value - stake
+
         record = ModelRecord(
             model_id=mid,
-            creator=self._caller(),
+            creator=caller,
             weights_sha256=weights,
             dataset_sha256=dataset,
             config_sha256=config,
@@ -700,42 +897,63 @@ class AIModelIPRegistry(gl.Contract):
         self.model_ids.append(mid)
         self.identity_owner[identity] = mid
         self.total_locked = u256(int(self.total_locked) + stake)
+        # The bond enters custody here; the excess is credited separately below,
+        # which also mirrors its custody, so every wei is counted exactly once.
+        self.vault_custody_balance = u256(int(self.vault_custody_balance) + stake)
+        if excess > 0:
+            self._credit_refund(caller, excess, REASON_REGISTRATION_EXCESS)
 
         ModelRegistered(mid, creator=record.creator, stake=u256(stake),
                         identity_digest=record.identity_digest).emit()
         return {
+            "accepted": True,
             "model_id": mid,
             "identity_digest": record.identity_digest,
             "deposit": stake,
+            "refund_credited": excess,
             "status": MODEL_ACTIVE,
         }
 
     @gl.public.write.payable
     def top_up_stake(self, model_id: str) -> dict:
-        self._require_not_paused()
-        mid = self._validate_model_id(model_id)
-        model = self._require_model(mid)
-        if model.creator != self._caller():
-            raise gl.vm.UserError(ERROR_EXPECTED + " caller is not the model creator")
+        caller = self._caller()
+        value = int(gl.message.value)
+        if self.paused:
+            return self._reject_payable_and_credit_refund(caller, value, REJECT_PAUSED)
+
+        mid, bad = self._check_model_id(model_id)
+        if bad:
+            return self._reject_payable_and_credit_refund(caller, value, bad)
+        if mid not in self.models:
+            return self._reject_payable_and_credit_refund(caller, value, REJECT_UNKNOWN_MODEL)
+        model = self.models[mid]
+        if model.creator != caller:
+            return self._reject_payable_and_credit_refund(caller, value, REJECT_NON_CREATOR)
         if model.status == MODEL_DEREGISTERED:
-            raise gl.vm.UserError(ERROR_EXPECTED + " model is deregistered")
+            return self._reject_payable_and_credit_refund(caller, value, REJECT_DEREGISTERED_MODEL)
+        if value <= 0:
+            return self._reject_payable_and_credit_refund(caller, value, REJECT_ZERO_TOP_UP)
 
-        amount = int(gl.message.value)
-        if amount <= 0:
-            raise gl.vm.UserError(ERROR_EXPECTED + " top up must be positive")
+        now, bad = self._check_now()
+        if bad:
+            return self._reject_payable_and_credit_refund(caller, value, bad)
 
-        model.deposit = u256(int(model.deposit) + amount)
-        model.total_staked = u256(int(model.total_staked) + amount)
-        model.updated_at = u256(self._now())
-        self.total_locked = u256(int(self.total_locked) + amount)
+        model.deposit = u256(int(model.deposit) + value)
+        model.total_staked = u256(int(model.total_staked) + value)
+        model.updated_at = u256(now)
+        self.total_locked = u256(int(self.total_locked) + value)
+        self.vault_custody_balance = u256(int(self.vault_custody_balance) + value)
 
-        StakeToppedUp(mid, amount=u256(amount), deposit=model.deposit).emit()
-        return {"model_id": mid, "deposit": int(model.deposit)}
+        StakeToppedUp(mid, amount=u256(value), deposit=model.deposit).emit()
+        return {"accepted": True, "model_id": mid, "deposit": int(model.deposit),
+                "refund_credited": 0}
 
     @gl.public.write
     def update_listing(self, model_id: str, metadata_url: str, benchmark_url: str,
                        license_terms: str) -> dict:
-        self._reject_value()
+        guard = self._guard_nonpayable()
+        if guard:
+            return guard
         mid = self._validate_model_id(model_id)
         model = self._require_model(mid)
         if model.creator != self._caller():
@@ -756,7 +974,9 @@ class AIModelIPRegistry(gl.Contract):
 
     @gl.public.write
     def request_deregistration(self, model_id: str) -> dict:
-        self._reject_value()
+        guard = self._guard_nonpayable()
+        if guard:
+            return guard
         mid = self._validate_model_id(model_id)
         model = self._require_model(mid)
         if model.creator != self._caller():
@@ -777,7 +997,9 @@ class AIModelIPRegistry(gl.Contract):
 
     @gl.public.write
     def cancel_deregistration(self, model_id: str) -> dict:
-        self._reject_value()
+        guard = self._guard_nonpayable()
+        if guard:
+            return guard
         mid = self._validate_model_id(model_id)
         model = self._require_model(mid)
         if model.creator != self._caller():
@@ -794,7 +1016,9 @@ class AIModelIPRegistry(gl.Contract):
 
     @gl.public.write
     def finalize_deregistration(self, model_id: str) -> dict:
-        self._reject_value()
+        guard = self._guard_nonpayable()
+        if guard:
+            return guard
         mid = self._validate_model_id(model_id)
         model = self._require_model(mid)
         if model.creator != self._caller():
@@ -824,31 +1048,67 @@ class AIModelIPRegistry(gl.Contract):
                      claim_config_sha256: str, claim_card_sha256: str,
                      challenger_metadata_url: str, challenger_benchmark_url: str,
                      evidence_note: str) -> dict:
-        self._require_not_paused()
-        mid = self._validate_model_id(model_id)
-        model = self._require_model(mid)
+        caller = self._caller()
+        value = int(gl.message.value)
+        if self.paused:
+            return self._reject_payable_and_credit_refund(caller, value, REJECT_PAUSED)
+
+        mid, bad = self._check_model_id(model_id)
+        if bad:
+            return self._reject_payable_and_credit_refund(caller, value, bad)
+        if mid not in self.models:
+            return self._reject_payable_and_credit_refund(caller, value, REJECT_UNKNOWN_MODEL)
+        model = self.models[mid]
         if model.status == MODEL_DEREGISTERED:
-            raise gl.vm.UserError(ERROR_EXPECTED + " model is deregistered")
-        if model.creator == self._caller():
-            raise gl.vm.UserError(ERROR_EXPECTED + " creator cannot dispute their own model")
-        self._require_no_open_dispute(mid)
+            return self._reject_payable_and_credit_refund(caller, value, REJECT_DEREGISTERED_MODEL)
+        if model.creator == caller:
+            return self._reject_payable_and_credit_refund(caller, value, REJECT_SELF_DISPUTE)
+        if self._open_dispute_id(mid) != "":
+            return self._reject_payable_and_credit_refund(caller, value, REJECT_OPEN_DISPUTE)
 
-        weights = self._validate_digest(claim_weights_sha256, "claimed weights digest")
-        dataset = self._validate_digest(claim_dataset_sha256, "claimed dataset digest")
-        config = self._validate_digest(claim_config_sha256, "claimed config digest")
-        card = self._validate_digest(claim_card_sha256, "claimed card digest")
-        metadata = self._validate_url(challenger_metadata_url, "challenger metadata url")
-        benchmark = self._validate_url(challenger_benchmark_url, "challenger benchmark url")
-        note = self._validate_short_text(evidence_note, "evidence note", MAX_NOTE_TEXT)
+        weights, bad = self._check_digest(claim_weights_sha256, "claimed weights digest",
+                                          REJECT_INVALID_WEIGHTS)
+        if bad:
+            return self._reject_payable_and_credit_refund(caller, value, bad)
+        dataset, bad = self._check_digest(claim_dataset_sha256, "claimed dataset digest",
+                                          REJECT_INVALID_DATASET)
+        if bad:
+            return self._reject_payable_and_credit_refund(caller, value, bad)
+        config, bad = self._check_digest(claim_config_sha256, "claimed config digest",
+                                         REJECT_INVALID_CONFIG)
+        if bad:
+            return self._reject_payable_and_credit_refund(caller, value, bad)
+        card, bad = self._check_digest(claim_card_sha256, "claimed card digest", REJECT_INVALID_CARD)
+        if bad:
+            return self._reject_payable_and_credit_refund(caller, value, bad)
+        metadata, bad = self._check_url(challenger_metadata_url, "challenger metadata url",
+                                        REJECT_INVALID_CHALLENGER_METADATA_URL)
+        if bad:
+            return self._reject_payable_and_credit_refund(caller, value, bad)
+        benchmark, bad = self._check_url(challenger_benchmark_url, "challenger benchmark url",
+                                         REJECT_INVALID_CHALLENGER_BENCHMARK_URL)
+        if bad:
+            return self._reject_payable_and_credit_refund(caller, value, bad)
+        note, bad = self._check_text(evidence_note, "evidence note", MAX_NOTE_TEXT,
+                                     REJECT_INVALID_EVIDENCE_NOTE)
+        if bad:
+            return self._reject_payable_and_credit_refund(caller, value, bad)
 
-        stake = int(gl.message.value)
         minimum = int(self.min_dispute_stake)
-        if stake < minimum:
-            raise gl.vm.UserError(ERROR_EXPECTED + " stake below minimum dispute stake")
+        if value < minimum:
+            return self._reject_payable_and_credit_refund(caller, value, REJECT_DISPUTE_BOND)
         # Full bond: an accusation must be funded at least as heavily as the deposit it
         # attacks, so a cheap false claim cannot be a favourable bet against a large stake.
-        if stake < int(model.deposit):
-            raise gl.vm.UserError(ERROR_EXPECTED + " challenger stake must cover the model deposit")
+        required = minimum
+        if required < int(model.deposit):
+            required = int(model.deposit)
+        if value < required:
+            return self._reject_payable_and_credit_refund(caller, value, REJECT_FULL_BOND)
+
+        now, bad = self._check_now()
+        if bad:
+            return self._reject_payable_and_credit_refund(caller, value, bad)
+        excess = value - required
 
         model_digests = [model.weights_sha256, model.dataset_sha256,
                          model.config_sha256, model.card_sha256]
@@ -859,13 +1119,12 @@ class AIModelIPRegistry(gl.Contract):
         seq = int(self.dispute_seq) + 1
         self.dispute_seq = u256(seq)
         dispute_id = "dsp-" + str(seq)
-        now = self._now()
         deadline = now + int(self.audit_window_secs)
 
         record = DisputeRecord(
             dispute_id=dispute_id,
             model_id=mid,
-            challenger=self._caller(),
+            challenger=caller,
             creator=model.creator,
             claim_weights_sha256=weights,
             claim_dataset_sha256=dataset,
@@ -875,7 +1134,7 @@ class AIModelIPRegistry(gl.Contract):
             challenger_benchmark_url=benchmark,
             match_mask=u256(mask),
             match_count=u256(matches),
-            challenger_stake=u256(stake),
+            challenger_stake=u256(required),
             creator_stake_at_open=model.deposit,
             pot_at_settlement=u256(0),
             evidence_note=note,
@@ -902,18 +1161,25 @@ class AIModelIPRegistry(gl.Contract):
         model.disputes_total = u256(int(model.disputes_total) + 1)
         model.last_dispute_id = dispute_id
         model.updated_at = u256(now)
-        self.total_locked = u256(int(self.total_locked) + stake)
+        self.total_locked = u256(int(self.total_locked) + required)
+        # The bond enters custody here; the excess is credited separately below,
+        # which also mirrors its custody, so every wei is counted exactly once.
+        self.vault_custody_balance = u256(int(self.vault_custody_balance) + required)
+        if excess > 0:
+            self._credit_refund(caller, excess, REASON_DISPUTE_EXCESS)
 
         DisputeOpened(dispute_id, model_id=mid, challenger=record.challenger,
-                      stake=u256(stake), match_mask=u256(mask),
+                      stake=u256(required), match_mask=u256(mask),
                       audit_deadline=u256(deadline)).emit()
         return {
+            "accepted": True,
             "dispute_id": dispute_id,
             "model_id": mid,
             "match_mask": mask,
             "match_count": matches,
             "audit_deadline": deadline,
-            "challenger_stake": stake,
+            "challenger_stake": required,
+            "refund_credited": excess,
         }
 
     @gl.public.write
@@ -925,7 +1191,9 @@ class AIModelIPRegistry(gl.Contract):
         reconciliation rules. `prompt_comparative` requires exact agreement on the
         tier, both split basis points and the committed digest match count.
         """
-        self._reject_value()
+        guard = self._guard_nonpayable()
+        if guard:
+            return guard
         dispute = self._require_open_dispute(dispute_id)
         model = self._require_model(dispute.model_id)
         if self._caller() != dispute.creator and self._caller() != dispute.challenger:
@@ -1036,7 +1304,9 @@ class AIModelIPRegistry(gl.Contract):
     @gl.public.write
     def propose_settlement(self, dispute_id: str, creator_bps: u256, challenger_bps: u256,
                            terms_note: str) -> dict:
-        self._reject_value()
+        guard = self._guard_nonpayable()
+        if guard:
+            return guard
         dispute = self._require_open_dispute(dispute_id)
         caller = self._caller()
         if caller != dispute.creator and caller != dispute.challenger:
@@ -1078,7 +1348,9 @@ class AIModelIPRegistry(gl.Contract):
     @gl.public.write
     def countersign_settlement(self, dispute_id: str, proposal_version: u256,
                               proposal_digest: str) -> dict:
-        self._reject_value()
+        guard = self._guard_nonpayable()
+        if guard:
+            return guard
         dispute = self._require_open_dispute(dispute_id)
         caller = self._caller()
 
@@ -1126,7 +1398,9 @@ class AIModelIPRegistry(gl.Contract):
         A dispute may only expire after its deadline, so this cannot be used to
         front run an audit. Nothing is slashed and the model deposit is untouched.
         """
-        self._reject_value()
+        guard = self._guard_nonpayable()
+        if guard:
+            return guard
         dispute = self._require_open_dispute(dispute_id)
         if self._now() < int(dispute.audit_deadline):
             raise gl.vm.UserError(ERROR_EXPECTED + " audit window is still open")
@@ -1192,7 +1466,9 @@ class AIModelIPRegistry(gl.Contract):
     @gl.public.write
     def set_parameters(self, min_registration_stake: u256, min_dispute_stake: u256,
                        audit_window_secs: u256, exit_delay_secs: u256) -> dict:
-        self._reject_value()
+        guard = self._guard_nonpayable()
+        if guard:
+            return guard
         self._require_owner()
 
         registration = int(min_registration_stake)
@@ -1220,7 +1496,9 @@ class AIModelIPRegistry(gl.Contract):
 
     @gl.public.write
     def set_paused(self, paused: bool) -> dict:
-        self._reject_value()
+        guard = self._guard_nonpayable()
+        if guard:
+            return guard
         self._require_owner()
         self.paused = bool(paused)
         PausedChanged(bool(paused), actor=self._caller()).emit()
@@ -1228,7 +1506,9 @@ class AIModelIPRegistry(gl.Contract):
 
     @gl.public.write
     def transfer_ownership(self, next_owner: Address) -> dict:
-        self._reject_value()
+        guard = self._guard_nonpayable()
+        if guard:
+            return guard
         self._require_owner()
         candidate = _as_address(next_owner)
         if candidate == Address(b"\x00" * 20):
@@ -1240,7 +1520,9 @@ class AIModelIPRegistry(gl.Contract):
 
     @gl.public.write
     def accept_ownership(self) -> dict:
-        self._reject_value()
+        guard = self._guard_nonpayable()
+        if guard:
+            return guard
         if self._caller() != self.pending_owner:
             raise gl.vm.UserError(ERROR_EXPECTED + " caller is not the pending owner")
         previous = self.owner
@@ -1248,6 +1530,94 @@ class AIModelIPRegistry(gl.Contract):
         self.pending_owner = Address(b"\x00" * 20)
         OwnershipTransferred(previous, next_owner=self.owner).emit()
         return {"owner": self.owner.as_hex}
+
+    # ------------------------------------------------------------------
+    # Refund withdrawal and ledger reconciliation. These paths cannot touch a
+    # bond: they move only value already credited to a refundable balance, or
+    # value the ledger attributes to nobody at all.
+    # ------------------------------------------------------------------
+    def _withdraw_refund(self, requested: int) -> dict:
+        caller = self._caller()
+        key = _address_key(caller)
+        balance = int(self.refundable_balances.get(key, u256(0)))
+        if balance <= 0:
+            raise gl.vm.UserError(ERROR_EXPECTED + " no refundable balance")
+        if requested < 0:
+            raise gl.vm.UserError(ERROR_EXPECTED + " withdrawal amount must not be negative")
+        if requested == 0:
+            payout = balance
+        elif requested > balance:
+            raise gl.vm.UserError(ERROR_EXPECTED + " withdrawal exceeds refundable balance")
+        else:
+            payout = requested
+
+        remaining = balance - payout
+        self.refundable_balances[key] = u256(remaining)
+        self.total_refundable_custody = u256(int(self.total_refundable_custody) - payout)
+        self.total_refunded_out = u256(int(self.total_refunded_out) + payout)
+        self.vault_custody_balance = u256(int(self.vault_custody_balance) - payout)
+        _send_external_value(caller, payout)
+        RefundWithdrawn(key, amount=u256(payout), remaining=u256(remaining)).emit()
+        return {
+            "accepted": True,
+            "sender": key,
+            "withdrawn": payout,
+            "remaining": remaining,
+        }
+
+    @gl.public.write
+    def withdraw_refund(self, amount: u256 = 0) -> dict:
+        """Withdraw a credited refund, or the whole balance when amount is zero."""
+        guard = self._guard_nonpayable()
+        if guard:
+            return guard
+        return self._withdraw_refund(int(amount))
+
+    @gl.public.write
+    def claim_refundable_balance(self) -> dict:
+        """Withdraw the whole credited refund balance."""
+        guard = self._guard_nonpayable()
+        if guard:
+            return guard
+        return self._withdraw_refund(0)
+
+    @gl.public.write
+    def record_or_recover_unaccounted_value(self, recipient: str) -> dict:
+        """Convert an unaccounted surplus into a refundable credit.
+
+        A surplus can only come from value that reached the ghost without a
+        ledger entry, which the soft fail payable paths above no longer create.
+        The owner chooses the recipient because no sender is recorded for such
+        value, and the amount is capped at the measured surplus, so this can
+        never move a bond or an existing refund credit.
+        """
+        guard = self._guard_nonpayable()
+        if guard:
+            return guard
+        self._require_owner()
+        key = self._address_text_key(recipient)
+
+        locked = int(self.total_locked)
+        refundable = int(self.total_refundable_custody)
+        balance = int(self.balance)
+        surplus = balance - locked - refundable
+        if surplus <= 0:
+            return {
+                "accepted": False,
+                "reason": REJECT_NO_SURPLUS,
+                "recipient": key,
+                "recovered": 0,
+                "unaccounted_surplus": 0,
+            }
+
+        self._credit_refund_key(key, surplus, REASON_UNACCOUNTED_RECOVERY)
+        UnaccountedValueRecovered(key, amount=u256(surplus)).emit()
+        return {
+            "accepted": True,
+            "recipient": key,
+            "recovered": surplus,
+            "unaccounted_surplus": 0,
+        }
 
     # ------------------------------------------------------------------
     # Views
@@ -1264,6 +1634,10 @@ class AIModelIPRegistry(gl.Contract):
             "paused": self.paused,
             "total_locked": int(self.total_locked),
             "total_paid_out": int(self.total_paid_out),
+            "total_refundable_custody": int(self.total_refundable_custody),
+            "total_refunded_out": int(self.total_refunded_out),
+            "vault_custody_balance": int(self.vault_custody_balance),
+            "rejected_payable_count": int(self.rejected_payable_count),
             "model_count": len(self.model_ids),
             "dispute_count": len(self.dispute_ids),
             "split_table": {
@@ -1423,6 +1797,63 @@ class AIModelIPRegistry(gl.Contract):
         return [did for did in self.dispute_ids]
 
     @gl.public.view
+    def get_refundable_balance(self, address: str) -> dict:
+        """Credited refund balance for one address, never inferred from the ghost."""
+        key = self._address_text_key(address)
+        return {
+            "address": key,
+            "refundable_balance": int(self.refundable_balances.get(key, u256(0))),
+            "last_rejection": self.last_payable_rejection.get(key, ""),
+        }
+
+    @gl.public.view
+    def get_last_payable_rejection(self, address: str) -> dict:
+        """Why the most recent payable call from this address was refused."""
+        key = self._address_text_key(address)
+        return {
+            "address": key,
+            "reason": self.last_payable_rejection.get(key, ""),
+            "refundable_balance": int(self.refundable_balances.get(key, u256(0))),
+            "total_rejections": int(self.rejected_payable_count),
+        }
+
+    @gl.public.view
+    def get_custody_accounting_summary(self) -> dict:
+        """State the custody identity and every term used to check it."""
+        registration_total = 0
+        for mid in self.model_ids:
+            registration_total += int(self.models[mid].deposit)
+        dispute_total = 0
+        for did in self.dispute_ids:
+            dispute = self.disputes[did]
+            if dispute.status == DISPUTE_OPEN:
+                dispute_total += int(dispute.challenger_stake)
+
+        locked = int(self.total_locked)
+        refundable = int(self.total_refundable_custody)
+        balance = int(self.balance)
+        vault = int(self.vault_custody_balance)
+        identity_ok = (
+            locked == registration_total + dispute_total
+            and balance == locked + ROYALTY_ESCROW + refundable
+            and vault == balance
+        )
+        return {
+            "vault_custody_balance": vault,
+            "contract_balance": balance,
+            "active_registration_bonds": registration_total,
+            "active_dispute_bonds": dispute_total,
+            "locked_bonds": locked,
+            "royalty_escrow": ROYALTY_ESCROW,
+            "total_refundable_custody": refundable,
+            "unaccounted_surplus": balance - locked - refundable,
+            "accounting_identity_ok": identity_ok,
+            "total_paid_out": int(self.total_paid_out),
+            "total_refunded_out": int(self.total_refunded_out),
+            "rejected_payable_count": int(self.rejected_payable_count),
+        }
+
+    @gl.public.view
     def check_invariants(self, limit: u256) -> dict:
         """Recompute escrow and identity invariants from scratch.
 
@@ -1500,12 +1931,30 @@ class AIModelIPRegistry(gl.Contract):
         if expected_locked != int(self.total_locked):
             errors.append("total_locked does not match the ledger")
 
+        refundable_total = 0
+        scanned_holders = 0
+        for key in self.refund_holders:
+            if scanned_holders >= budget:
+                break
+            scanned_holders += 1
+            entry = int(self.refundable_balances.get(key, u256(0)))
+            if entry < 0:
+                errors.append("refund balance is negative: " + key)
+            refundable_total += entry
+            if len(key) != 42 or not key.startswith("0x"):
+                errors.append("refund key is not an address: " + key)
+        if refundable_total != int(self.total_refundable_custody):
+            errors.append("refundable balances do not match total_refundable_custody")
+
         contract_balance = int(self.balance)
-        if contract_balance != int(self.total_locked):
-            # A surplus is unaccounted value, usually the value of a call that
-            # reverted after the chain had already credited the ghost. It is just
-            # as much an invariant violation as a shortfall.
-            errors.append("contract balance does not match the locked escrow")
+        accounted = int(self.total_locked) + int(self.total_refundable_custody)
+        if contract_balance != accounted:
+            # An excess is value the ledger does not attribute to anyone. A
+            # shortfall is value the ledger promises but the contract cannot
+            # pay. Both are invariant violations.
+            errors.append("contract balance does not match locked escrow plus refundable custody")
+        if int(self.vault_custody_balance) != contract_balance:
+            errors.append("vault custody balance does not match the contract balance")
         return {
             "ok": len(errors) == 0,
             "errors": errors[:20],
@@ -1515,11 +1964,18 @@ class AIModelIPRegistry(gl.Contract):
             "expected_locked": expected_locked,
             "total_locked": int(self.total_locked),
             "total_paid_out": int(self.total_paid_out),
+            "total_refundable_custody": int(self.total_refundable_custody),
+            "refundable_sum": refundable_total,
+            "vault_custody_balance": int(self.vault_custody_balance),
             "open_disputes": open_disputes,
             "settled_disputes": settled,
             "contract_balance": contract_balance,
-            "solvency_gap": contract_balance - int(self.total_locked),
+            "solvency_gap": contract_balance - accounted,
+            "accounting_identity_ok": contract_balance == accounted,
             "scanned_models": scanned_models,
             "scanned_disputes": scanned_disputes,
-            "complete": scanned_models == len(self.model_ids) and scanned_disputes == len(self.dispute_ids),
+            "scanned_refund_holders": scanned_holders,
+            "complete": (scanned_models == len(self.model_ids)
+                         and scanned_disputes == len(self.dispute_ids)
+                         and scanned_holders == len(self.refund_holders)),
         }
